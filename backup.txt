@@ -1,0 +1,286 @@
+modele.py
+from sqlalchemy import (
+    Column, Integer, String, DECIMAL, SmallInteger, Date, DateTime, ForeignKey
+)
+from sqlalchemy.orm import relationship, declarative_base
+
+Base = declarative_base()
+
+# ===============================================
+# 👥 SYS_USER
+# ===============================================
+class SysUser(Base):
+    __tablename__ = 'SYS_USER'
+
+    USER_ID = Column(Integer, primary_key=True)
+    USERNAME = Column(String(50), unique=True, nullable=False)
+    PASSWORD_HASH = Column(String(255), nullable=False)
+    NAME = Column(String(100))
+    SURNAME = Column(String(100))
+    EMAIL = Column(String(100))
+    ROLE = Column(String(50))
+    ACTIVE = Column(SmallInteger, default=1)
+
+    invoices_created = relationship('Invoice', back_populates='created_by_user')
+
+
+# ===============================================
+# 🧍 CUSTOMER
+# ===============================================
+class Customer(Base):
+    __tablename__ = 'CUSTOMER'
+
+    CUSTOMER_ID = Column(Integer, primary_key=True)
+    NAME = Column(String(100), nullable=False)
+    EMAIL = Column(String(100))
+    PHONE = Column(String(50))
+    ADDRESS = Column(String(255))
+    CITY = Column(String(100))
+    COUNTRY = Column(String(100))
+
+    orders = relationship('CustomerOrder', back_populates='customer')
+    invoices = relationship('Invoice', back_populates='customer')
+
+
+# ===============================================
+# 📦 PRODUCT
+# ===============================================
+class Product(Base):
+    __tablename__ = 'PRODUCT'
+
+    PRODUCT_ID = Column(Integer, primary_key=True)
+    NAME = Column(String(100), nullable=False)
+    DESCRIPTION = Column(String(255))
+    PRICE = Column(DECIMAL(10, 2), nullable=False)
+    STOCK_QUANTITY = Column(Integer, default=0)
+
+    order_items = relationship('OrderItem', back_populates='product')
+
+
+# ===============================================
+# 🧾 CUSTOMER_ORDER
+# ===============================================
+class CustomerOrder(Base):
+    __tablename__ = 'CUSTOMER_ORDER'
+
+    ORDER_ID = Column(Integer, primary_key=True)
+    CUSTOMER_ID = Column(Integer, ForeignKey('CUSTOMER.CUSTOMER_ID'), nullable=False)
+    ORDER_DATE = Column(DateTime)
+    STATUS = Column(String(50), default='PENDING')
+    TOTAL_AMOUNT = Column(DECIMAL(10, 2), nullable=False)
+
+    customer = relationship('Customer', back_populates='orders')
+    order_items = relationship('OrderItem', back_populates='order')
+    invoices = relationship('Invoice', back_populates='order')
+
+
+# ===============================================
+# 🧩 ORDER_ITEM
+# ===============================================
+class OrderItem(Base):
+    __tablename__ = 'ORDER_ITEM'
+
+    ORDER_ITEM_ID = Column(Integer, primary_key=True)
+    ORDER_ID = Column(Integer, ForeignKey('CUSTOMER_ORDER.ORDER_ID'), nullable=False)
+    PRODUCT_ID = Column(Integer, ForeignKey('PRODUCT.PRODUCT_ID'), nullable=False)
+    QUANTITY = Column(Integer, nullable=False)
+    UNIT_PRICE = Column(DECIMAL(10, 2), nullable=False)
+
+    order = relationship('CustomerOrder', back_populates='order_items')
+    product = relationship('Product', back_populates='order_items')
+
+
+# ===============================================
+# 🧾 INVOICE
+# ===============================================
+class Invoice(Base):
+    __tablename__ = 'INVOICE'
+
+    INVOICE_ID = Column(Integer, primary_key=True)
+    INVOICE_NUMBER = Column(String(50), unique=True, nullable=False)
+    CUSTOMER_ID = Column(Integer, ForeignKey('CUSTOMER.CUSTOMER_ID'), nullable=False)
+    ORDER_ID = Column(Integer, ForeignKey('CUSTOMER_ORDER.ORDER_ID'))
+    ISSUE_DATE = Column(Date, nullable=False)
+    DUE_DATE = Column(Date, nullable=False)
+    TOTAL_AMOUNT = Column(DECIMAL(10, 2), nullable=False)
+    STATUS = Column(String(50), default='UNPAID')
+    CREATED_BY = Column(Integer, ForeignKey('SYS_USER.USER_ID'))
+
+    customer = relationship('Customer', back_populates='invoices')
+    order = relationship('CustomerOrder', back_populates='invoices')
+    created_by_user = relationship('SysUser', back_populates='invoices_created')
+    payments = relationship('Payment', back_populates='invoice')
+
+
+# ===============================================
+# 💰 PAYMENT
+# ===============================================
+class Payment(Base):
+    __tablename__ = 'PAYMENT'
+
+    PAYMENT_ID = Column(Integer, primary_key=True)
+    INVOICE_ID = Column(Integer, ForeignKey('INVOICE.INVOICE_ID'), nullable=False)
+    PAYMENT_DATE = Column(Date, nullable=False)
+    AMOUNT = Column(DECIMAL(10, 2), nullable=False)
+    METHOD = Column(String(50))
+    CONFIRMED = Column(SmallInteger, default=0)
+
+    invoice = relationship('Invoice', back_populates='payments')
+
+FakeDataGenerator.py
+import unicodedata
+
+from modele import Base, SysUser, Customer, Product, CustomerOrder, OrderItem, Invoice, Payment
+from datetime import date, datetime
+from faker import Faker
+import random
+import csv
+
+class FakeDataGenerator:
+    def __init__(self):
+        self.fake = Faker('pl_PL')
+
+    def remove_polish_chars(self, text):
+        nfkd_form = unicodedata.normalize('NFKD', text)
+        return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+
+    def generate_fake_products(self):
+        products = []
+        with open('products.csv', mode='r', encoding="utf-8") as file:
+            csvFile = csv.reader(file)
+            for lines in csvFile:
+                product = Product(
+                    NAME=lines[0],
+                    DESCRIPTION=lines[1].replace('"', ''),
+                    PRICE=round(self.fake.pyfloat(left_digits=3, right_digits=2, positive=True), 2),
+                    STOCK_QUANTITY=random.randint(1, 500),
+                )
+                products.append(product)
+        return products
+
+    def generate_fake_users(self, count: int):
+        users = []
+        roles = ["SALES", "ACCOUNTANT", "WAREHOUSE"]
+        weights = [0.7, 0.1, 0.2]
+        for i in range(count):
+            name = self.fake.first_name()
+            surname = self.fake.last_name()
+            username = self.remove_polish_chars(name) + self.remove_polish_chars(surname) + str(random.randint(1, 100))
+            user = SysUser(
+                USERNAME = username,
+                PASSWORD_HASH = self.fake.sha256(),
+                NAME = name,
+                SURNAME = surname,
+                EMAIL = username + '@mycompany.com',
+                ROLE = random.choices(roles, weights=weights, k=1)[0]
+            )
+            users.append(user)
+        return users
+
+
+    def generate_fake_customers(self, count: int):
+        customers = []
+
+        for i in range(count):
+            if random.choices([0 , 1], weights=[0.6, 0.4], k=1)[0] == 0:
+                name = self.fake.first_name() + ' ' + self.fake.last_name()
+                email = name.replace(' ', '').lower() + '@customer.pl'
+            else:
+                name = self.fake.company()
+                domain = name.lower().replace(" ", "").replace('.', "") + ".com"
+                email = f"contact@{domain}"
+
+            customer = Customer(
+                NAME=name,
+                EMAIL=email,
+                PHONE=self.fake.phone_number(),
+                ADDRESS="{fake.street_name()} {fake.building_number()}, {fake.postcode()}",
+                CITY=self.fake.city(),
+                COUNTRY="Polska",
+            )
+            customers.append(customer)
+        return customers
+
+    def generate_order_items(self, products):
+        items = []
+        count = random.randint(1, 15)
+        rd_products = random.choices(products, k=count)
+        for product in rd_products:
+            order_item = OrderItem(
+                ORDER_ID=0,
+                PRODUCT_ID=product.PRODUCT_ID,
+                QUANTITY=random.randint(1, 10),
+                UNIT_PRICE=product.PRICE
+            )
+            items.append(order_item)
+        return items
+
+
+    def generate_fake_order_data(self, customers, products, session):
+
+        start_datetime = datetime(2022, 1, 1, 0, 0, 0)
+        end_datetime = datetime(2025, 9, 30, 23, 59, 59)
+        random_dt = self.fake.date_time_between(start_date=start_datetime, end_date=end_datetime)
+        days_diff = (end_datetime - random_dt).days
+        rd_status = random.choices([0, 1], weights=[0.7, 0.3], k=1)[0]
+
+        if days_diff > 60:
+            status = 'COMPLETED' if rd_status == 0 else 'CANCELED'
+        elif days_diff < 3:
+            status = 'PENDING'
+        else:
+            status = 'PROCESSING' if rd_status == 0 else 'IN_TRANSIT'
+
+        order_items = self.generate_order_items(products)
+        total_amount = sum(item.UNIT_PRICE * item.QUANTITY for item in order_items)
+
+        order = CustomerOrder(
+             CUSTOMER_ID = random.choice(customers).CUSTOMER_ID,
+             ORDER_DATE = random_dt,
+             STATUS = status,
+             TOTAL_AMOUNT = total_amount,
+        )
+
+        session.add(order)
+        session.flush()
+
+        for item in order_items:
+            item.ORDER_ID = order.ORDER_ID
+
+        session.add_all(order_items)
+
+main.py
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+from FakeDataGenerator import FakeDataGenerator
+from modele import Base, SysUser, Customer, Product, CustomerOrder, OrderItem, Invoice, Payment
+from datetime import date, datetime
+import encodings
+import codecs
+
+# rejestracja kodowania cp1250, jeśli brak
+try:
+    codecs.lookup('cp1250')
+except LookupError:
+    import encodings.cp1250
+
+
+# 🔹 Połączenie do bazy Firebird
+engine = create_engine(
+    "firebird+firebird://sysdba:admin123@localhost:3050//var/lib/firebird/data/mirror.fdb?charset=UTF8"
+)
+
+# 🔹 Tworzymy sesję
+Session = sessionmaker(bind=engine)
+session = Session()
+Base.metadata.create_all(engine)
+
+generator = FakeDataGenerator()
+
+# products = generator.generate_fake_products()
+# users = generator.generate_fake_users(200)
+# customers = generator.generate_fake_customers(1000)
+products = session.scalars(select(Product)).all()
+customers = session.scalars(select(Customer)).all()
+order = generator.generate_fake_order_data(customers, products, session)
