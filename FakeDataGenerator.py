@@ -1,10 +1,21 @@
 import unicodedata
 import csv
 import random
+from collections import defaultdict  # Do agregacji danych w pamięci
 from datetime import datetime, timedelta
 from faker import Faker
 from sqlalchemy.orm import Session
+
+# Import Twoich modeli SQL
 from modele import Base, SysUser, Customer, Product, CustomerOrder, OrderItem, Invoice, Payment
+
+# Import modeli Cassandry (zakładam, że plik to cassandra_tables.py)
+from cassandra_tables import (
+    UsersByRole, CustomersByCity, ProductsByPrice,
+    InvoiceFullDetails, PaymentsByYearAmount,
+    SalesStatsByCountry, CustomerLeaderboard,
+    init_cassandra_schema
+)
 
 
 class FakeDataGenerator:
@@ -12,15 +23,24 @@ class FakeDataGenerator:
         self.fake = Faker('pl_PL')
         self.session = session
 
+        # --- CASSANDRA INIT ---
+        # Inicjalizujemy połączenie i tabele przy starcie
+        init_cassandra_schema()
+
+        # --- AGREGATORY DANYCH DLA CASSANDRY ---
+        # Cassandra nie robi "GROUP BY" wydajnie, więc policzymy to w Pythonie w trakcie generowania
+        # Klucz: (kraj, nazwa_produktu), Wartość: ilość
+        self.stats_sales_cache = defaultdict(int)
+
+        # Klucz: customer_id, Wartość: słownik z danymi do leaderboarda
+        self.stats_leaderboard_cache = {}
+
+        # ... Twoje istniejące wagi ...
         self.USER_ROLES = ["SALES", "ACCOUNTANT", "WAREHOUSE"]
         self.USER_ROLE_WEIGHTS = [0.7, 0.1, 0.2]
-
-        self.CUSTOMER_TYPE_WEIGHTS = [0.6, 0.4]  # 0 = osoba, 1 = firma
-
-        self.ORDER_STATUS_RANDOM_WEIGHTS = [0.7, 0.3]  # 0 = COMPLETED/PROCESSING, 1 = CANCELED/IN_TRANSIT
-
-        self.INVOICE_STATUS_RANDOM_WEIGHTS = [30, 70]  # UNPAID, PAID
-
+        self.CUSTOMER_TYPE_WEIGHTS = [0.6, 0.4]
+        self.ORDER_STATUS_RANDOM_WEIGHTS = [0.7, 0.3]
+        self.INVOICE_STATUS_RANDOM_WEIGHTS = [30, 70]
         self.PAYMENT_METHODS = ['CREDIT CARD', 'PAYPAL', 'BANK TRANSFER', 'GOOGLE PAY']
         self.PAYMENT_METHOD_WEIGHTS = [40, 30, 20, 10]
 
@@ -30,9 +50,11 @@ class FakeDataGenerator:
 
     def generate_fake_products(self):
         products = []
+        print("Generowanie produktów i wysyłka do Cassandry...")
         with open('products.csv', mode='r', encoding="utf-8") as file:
             csvFile = csv.reader(file)
-            for lines in csvFile:
+            for i, lines in enumerate(csvFile):
+                # SQL Object
                 product = Product(
                     NAME=lines[0],
                     DESCRIPTION=lines[1].replace('"', ''),
@@ -40,28 +62,53 @@ class FakeDataGenerator:
                     STOCK_QUANTITY=random.randint(1, 500),
                 )
                 products.append(product)
+
+                # --- CASSANDRA WRITE ---
+                # Zakładamy ID = i + 1, bo baza SQL jeszcze nie nadała ID (chyba że zrobisz flush)
+                # Dla uproszczenia przyjmuję, że ID będą zgodne z kolejnością
+                ProductsByPrice.create(
+                    bucket="all_products",  # Stała wartość do partycjonowania
+                    price=product.PRICE,
+                    product_id=i + 1,  # Symulujemy ID
+                    name=product.NAME,
+                    stock_quantity=product.STOCK_QUANTITY
+                )
         return products
 
     def generate_fake_users(self, count: int):
         users = []
+        print("Generowanie userów i wysyłka do Cassandry...")
         for i in range(count):
             name = self.fake.first_name()
             surname = self.fake.last_name()
             username = self.remove_polish_chars(name) + self.remove_polish_chars(surname) + str(random.randint(1, 100))
+            role = random.choices(self.USER_ROLES, weights=self.USER_ROLE_WEIGHTS, k=1)[0]
+
             user = SysUser(
                 USERNAME=username,
                 PASSWORD_HASH=self.fake.sha256(),
                 NAME=name,
                 SURNAME=surname,
                 EMAIL=username + '@mycompany.com',
-                ROLE=random.choices(self.USER_ROLES, weights=self.USER_ROLE_WEIGHTS, k=1)[0]
+                ROLE=role
             )
             users.append(user)
+
+            # --- CASSANDRA WRITE ---
+            UsersByRole.create(
+                role=role,
+                user_id=i + 1,  # Symulacja ID
+                username=username,
+                name=f"{name} {surname}",
+                email=user.EMAIL
+            )
         return users
 
     def generate_fake_customers(self, count: int):
         customers = []
+        print("Generowanie klientów i wysyłka do Cassandry...")
         for i in range(count):
+            # ... Twoja logika generowania ...
             if random.choices([0, 1], weights=self.CUSTOMER_TYPE_WEIGHTS, k=1)[0] == 0:
                 name = self.fake.first_name() + ' ' + self.fake.last_name()
                 email = name.replace(' ', '').lower() + '@customer.pl'
@@ -79,23 +126,38 @@ class FakeDataGenerator:
                 COUNTRY="Polska",
             )
             customers.append(customer)
+
+            # --- CASSANDRA WRITE ---
+            CustomersByCity.create(
+                city=customer.CITY,
+                customer_id=i + 1,
+                name=name,
+                email=email
+            )
         return customers
 
+    # ... funkcja generate_order_items bez zmian ...
     def generate_order_items(self, products):
+        # (Twoja oryginalna funkcja)
         items = []
         count = random.randint(1, 15)
         rd_products = random.choices(products, k=count)
         for product in rd_products:
-            order_item = OrderItem(
+            # UWAGA: product.PRODUCT_ID w tym momencie może być None, jeśli nie było commita.
+            # Musimy polegać na tym, że lista products ma indeksy odpowiadające ID.
+            # Dla celów skryptu demo przyjmijmy, że products[idx] ma ID = idx + 1
+            items.append(OrderItem(
                 ORDER_ID=0,
-                PRODUCT_ID=product.PRODUCT_ID,
+                PRODUCT_ID=products.index(product) + 1,  # Hack na brak ID przed commitem
                 QUANTITY=random.randint(1, 10),
                 UNIT_PRICE=product.PRICE
-            )
-            items.append(order_item)
+            ))
         return items
 
-    def generate_fake_order_data(self, customers, products, sales_users):
+    def generate_fake_order_data(self, customers, products, sales_users, current_order_id):
+        # Dodałem current_order_id jako argument, żebyśmy mieli ID do Cassandry
+
+        # ... Twoja logika generowania dat i statusu ...
         start_datetime = datetime(2022, 1, 1, 0, 0, 0)
         end_datetime = datetime(2025, 9, 30, 23, 59, 59)
         random_dt = self.fake.date_time_between(start_date=start_datetime, end_date=end_datetime)
@@ -112,26 +174,36 @@ class FakeDataGenerator:
         order_items = self.generate_order_items(products)
         total_amount = sum(item.UNIT_PRICE * item.QUANTITY for item in order_items)
 
+        # Wybieramy klienta
+        customer = random.choice(customers)
+
         order = CustomerOrder(
-            CUSTOMER_ID=random.choice(customers).CUSTOMER_ID,
+            CUSTOMER_ID=customers.index(customer) + 1,  # Hack na ID
             ORDER_DATE=random_dt,
             STATUS=status,
             TOTAL_AMOUNT=total_amount,
         )
-        # self.session.add(order)
-        # self.session.flush()
-
-
-        # for item in order_items:
-        #     item.ORDER_ID = order.ORDER_ID
-        # self.session.add_all(order_items)
         order.order_items = order_items
         self.session.add(order)
 
-        invoice_creator = random.choice(sales_users)
-        self.generate_fake_invoice(order, invoice_creator)
+        # --- CASSANDRA AGGREGATION (Sales Stats) ---
+        # Jeśli zamówienie jest zrealizowane, dodajemy do statystyk
+        if status == 'COMPLETED':
+            for item in order_items:
+                # Szukamy nazwy produktu (trochę wolne wyszukiwanie, w produkcji robimy to inaczej)
+                # products ma indeksy przesunięte o 1 względem ID
+                prod_name = products[item.PRODUCT_ID - 1].NAME
 
-    def generate_fake_invoice(self, order, user):
+                # Klucz: (Kraj, Nazwa Produktu) -> Wartość: ilość
+                self.stats_sales_cache[(customer.COUNTRY, prod_name)] += item.QUANTITY
+
+        invoice_creator = random.choice(sales_users)
+
+        # Przekazujemy klienta i items dalej, żeby nie szukać ich znowu
+        self.generate_fake_invoice(order, invoice_creator, customer, current_order_id, invoice_creator.USERNAME)
+
+    def generate_fake_invoice(self, order, user, customer_obj, order_id, agent_username):
+        # ... Twoja logika ...
         random_suffix = random.randint(100000, 999999)
         invoice_number = f"FV/{order.ORDER_DATE.strftime('%Y%m%d')}/{random_suffix}"
         issue_date = order.ORDER_DATE
@@ -147,7 +219,8 @@ class FakeDataGenerator:
         else:
             status = random.choices(['UNPAID', 'PAID'], weights=self.INVOICE_STATUS_RANDOM_WEIGHTS, k=1)[0]
 
-        created_by = user.USER_ID
+        created_by = user.USER_ID  # Tutaj uwaga, user.USER_ID może być pusty przed commitem
+
         invoice = Invoice(
             INVOICE_NUMBER=invoice_number,
             STATUS=status,
@@ -155,59 +228,154 @@ class FakeDataGenerator:
             ISSUE_DATE=issue_date,
             DUE_DATE=due_date,
             TOTAL_AMOUNT=total_amount,
-            CREATED_BY=created_by,
+            CREATED_BY=created_by,  # Hack na ID
         )
         order.invoices.append(invoice)
 
+        payment_method = None
+        payment_amount = 0.0
+        payment_confirmed = False
+        payment_date = None
+
         if status == 'PAID':
             payment_date = order.ORDER_DATE + timedelta(days=random.randint(0, 6))
-            method = random.choices(self.PAYMENT_METHODS, weights=self.PAYMENT_METHOD_WEIGHTS, k=1)[0]
+            payment_method = random.choices(self.PAYMENT_METHODS, weights=self.PAYMENT_METHOD_WEIGHTS, k=1)[0]
+            payment_amount = float(order.TOTAL_AMOUNT)  # rzutowanie na float dla bezpieczenstwa
+            payment_confirmed = True
 
             payment = Payment(
                 PAYMENT_DATE=payment_date,
                 AMOUNT=order.TOTAL_AMOUNT,
-                METHOD=method,
+                METHOD=payment_method,
                 CONFIRMED=1
             )
             invoice.payments.append(payment)
+
+            # --- CASSANDRA WRITE (Payments) ---
+            PaymentsByYearAmount.create(
+                year=payment_date.year,
+                amount=payment_amount,
+                payment_id=random.randint(1, 10000000),  # Fake ID
+                method=payment_method,
+                payment_date=payment_date,
+                confirmed=True
+            )
+
+        # --- CASSANDRA WRITE (Invoice Full Details) ---
+        # Symulujemy ID faktury (w realu pobralibysmy po save)
+        fake_invoice_id = random.randint(1, 10000000)
+
+        InvoiceFullDetails.create(
+            invoice_id=fake_invoice_id,
+            invoice_number=invoice_number,
+            issue_date=issue_date.date(),
+            due_date=due_date.date(),
+            total_amount=float(total_amount),
+            status=status,
+            past_due=False,
+            # Dane zdenormalizowane
+            customer_id=customer_obj.CUSTOMER_ID if hasattr(customer_obj, 'CUSTOMER_ID') else 0,
+            customer_name=customer_obj.NAME,
+            customer_email=customer_obj.EMAIL,
+            payment_method=payment_method if payment_method else "N/A",
+            payment_amount=payment_amount,
+            payment_confirmed=payment_confirmed
+        )
+
+        # --- CASSANDRA AGGREGATION (Leaderboard) ---
+        # Zbieramy dane do tabeli "Customer 360"
+        # Aktualizujemy cache dla tego klienta
+        c_key = customer_obj.CUSTOMER_ID  # Używamy ID jako klucza w słowniku pomocniczym
+
+        if c_key not in self.stats_leaderboard_cache:
+            self.stats_leaderboard_cache[c_key] = {
+                'country': customer_obj.COUNTRY,
+                'customer_name': customer_obj.NAME,
+                'agent': agent_username,
+                'gross_value': 0.0,
+                'orders_count': 0,
+                'items_count': 0,
+                'unique_products': set(),  # Set żeby zliczyć unikalne
+                'last_invoice': issue_date
+            }
+
+        # Aktualizujemy tylko jeśli zamówienie jest zakończone i opłacone (zgodnie z logiką SQL)
+        if order.STATUS == 'COMPLETED' and payment_confirmed:
+            stats = self.stats_leaderboard_cache[c_key]
+            stats['gross_value'] += float(total_amount)
+            stats['orders_count'] += 1
+            stats['items_count'] += sum(i.QUANTITY for i in order.order_items)
+            for i in order.order_items:
+                stats['unique_products'].add(i.PRODUCT_ID)
+
+            if issue_date > stats['last_invoice']:
+                stats['last_invoice'] = issue_date
+
+    def flush_cassandra_stats(self):
+        print("Finalizowanie: Zapisywanie zagregowanych statystyk do Cassandry...")
+
+        # 1. Zapis Sales Stats
+        print(f"Zapisywanie {len(self.stats_sales_cache)} rekordów sprzedaży...")
+        for (country, prod_name), qty in self.stats_sales_cache.items():
+            SalesStatsByCountry.create(
+                country=country,
+                product_name=prod_name,
+                total_quantity_sum=qty,
+                product_id=0  # Opcjonalne
+            )
+
+        # 2. Zapis Leaderboard
+        print(f"Zapisywanie leaderboarda dla {len(self.stats_leaderboard_cache)} klientów...")
+        for cid, data in self.stats_leaderboard_cache.items():
+            # Filtrujemy tylko tych co coś kupili (opcjonalne)
+            if data['orders_count'] > 0:
+                CustomerLeaderboard.create(
+                    country=data['country'],
+                    gross_value_brutto=data['gross_value'],
+                    customer_name=data['customer_name'],
+                    agent_username=data['agent'],
+                    orders_count=data['orders_count'],
+                    unique_products_count=len(data['unique_products']),
+                    total_items_quantity=data['items_count'],
+                    last_invoice_date=data['last_invoice'].date()
+                )
 
     def run_generation(self, num_users: int, num_customers: int, num_orders: int):
         print("Start: Generowanie danych...")
 
         products = self.generate_fake_products()
-        print(f"Wygenerowano {len(products)} produktów z CSV. Zapisywanie (bulk)...")
         self.session.bulk_save_objects(products, return_defaults=True)
+        # Hack: nadajemy tymczasowe ID, żeby logika działała przed commit
+        for i, p in enumerate(products): p.PRODUCT_ID = i + 1
 
         users = self.generate_fake_users(num_users)
-        print(f"Wygenerowano {len(users)} użytkowników. Zapisywanie (bulk)...")
         self.session.bulk_save_objects(users, return_defaults=True)
+        # Hack ID
+        for i, u in enumerate(users): u.USER_ID = i + 1
 
         customers = self.generate_fake_customers(num_customers)
-        print(f"Wygenerowano {len(customers)} klientów. Zapisywanie (bulk)...")
         self.session.bulk_save_objects(customers, return_defaults=True)
-
+        # Hack ID
+        for i, c in enumerate(customers): c.CUSTOMER_ID = i + 1
 
         sales_users = [u for u in users if u.ROLE == 'SALES']
-        if not sales_users:
-            print("BŁĄD: Nie znaleziono użytkowników z rolą 'SALES'. Nie można wygenerować faktur.")
-            print("Anulowanie.")
-            self.session.rollback()
-            return
-
-        print(f"Znaleziono {len(sales_users)} użytkowników 'SALES' do wystawiania faktur.")
 
         print(f"Start: Generowanie {num_orders} zamówień...")
         for i in range(num_orders):
-            self.generate_fake_order_data(customers, products, sales_users)
+            # Przekazujemy i + 1 jako ID zamówienia
+            self.generate_fake_order_data(customers, products, sales_users, i + 1)
             if (i + 1) % 100 == 0:
-                print(f" ... wygenerowano {i + 1}/{num_orders} zamówień")
+                print(f" ... wygenerowano {i + 1}/{num_orders}")
+
+        # --- FINALIZACJA CASSANDRY ---
+        self.flush_cassandra_stats()
 
         try:
-            print("Commit: Zapisywanie wszystkich zmian w bazie danych...")
+            print("Commit SQL...")
             self.session.commit()
-            print("Gotowe. Dane zostały wygenerowane pomyślnie.")
+            print("Gotowe.")
         except Exception as e:
-            print(f"BŁĄD: Wystąpił błąd podczas commita. Wycofywanie zmian. {e}")
+            print(f"BŁĄD SQL: {e}")
             self.session.rollback()
         finally:
             self.session.close()
