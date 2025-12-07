@@ -12,13 +12,12 @@ from cassandra import ConsistencyLevel
 class UsersByRole(Model):
     __table_name__ = 'users_by_role'
 
-    # Partition Key: Grupujemy użytkowników po roli, żeby pobrać wszystkich 'ACCOUNTANT' jednym strzałem
+    # Partition Key
     role = columns.Text(partition_key=True)
 
-    # Clustering Key: Unikalność wewnątrz roli zapewnia ID
+    # Clustering Key
     user_id = columns.Integer(primary_key=True)
 
-    # Dane
     username = columns.Text()
     name = columns.Text()
     email = columns.Text()
@@ -31,28 +30,27 @@ class UsersByRole(Model):
 class CustomersByCity(Model):
     __table_name__ = 'customers_by_city'
 
-    # Partition Key: Wszystkich klientów z jednego miasta trzymamy razem
+    # Partition Key
     city = columns.Text(partition_key=True)
 
-    # Clustering Key: ID klienta
+    # Clustering Key
     customer_id = columns.Integer(primary_key=True)
 
-    # Dane pomocnicze (można dodać imię, żeby wyświetlić listę bez dodatkowych zapytań)
     name = columns.Text()
     email = columns.Text()
 
 
 # ==========================================
-# 3. Zakresy liczbowe - Płatności (BETWEEN)
+# 3. Zakresy liczbowe - Płatności
 # SQL: SELECT FROM PAYMENT WHERE AMOUNT BETWEEN 10000 AND 40000
 # ==========================================
 class PaymentsByYearAmount(Model):
     __table_name__ = 'payments_by_year_amount'
 
-    # Partition Key: Musimy dodać sztuczny podział (np. rok), żeby nie skanować całej bazy
+    # Partition Key
     year = columns.Integer(partition_key=True)
 
-    # Clustering Key: Sortujemy po kwocie, żeby działało zapytanie zakresowe (BETWEEN)
+    # Clustering Key
     amount = columns.Decimal(primary_key=True, clustering_order="ASC")
     payment_id = columns.Integer(primary_key=True)
 
@@ -106,10 +104,10 @@ class InvoiceFullDetails(Model):
 class SalesStatsByCountry(Model):
     __table_name__ = 'sales_stats_by_country_product'
 
-    # Partition Key: Analiza per kraj
+    # Partition Key
     country = columns.Text(partition_key=True)
 
-    # Clustering Keys: Sortowanie po ilości (malejąco) - to robi robotę "ORDER BY"
+    # Clustering Keys
     total_quantity_sum = columns.Integer(primary_key=True, clustering_order="DESC")
     product_name = columns.Text(primary_key=True, clustering_order="ASC")
 
@@ -118,7 +116,7 @@ class SalesStatsByCountry(Model):
 
 
 # ==========================================
-# Agregacja: Customer 360 - bardzo szeroka tabela
+# Agregacja: Customer 360
 # ==========================================
 class CustomerLeaderboard(Model):
     __table_name__ = 'customer_performance_leaderboard'
@@ -142,23 +140,15 @@ class CustomerLeaderboard(Model):
 def init_cassandra_schema(keyspace='my_keyspace', nodes=['127.0.0.1']):
     print(f"1. Łączenie z klastrem Cassandra: {nodes}...")
 
-    # KROK 1: Łączymy się bez wskazywania keyspace (lub do domyślnego 'system'),
-    # żeby móc wykonać operacje administracyjne.
-    # UWAGA: Jeśli nadal masz błąd z 'asyncore', dodaj tu connection_class=AsyncioConnection jak ustaliliśmy wcześniej.
     connection.setup(nodes, 'system', protocol_version=4)
 
     print(f"2. Tworzenie Keyspace '{keyspace}' (jeśli nie istnieje)...")
-    # KROK 2: Tworzymy Keyspace.
-    # replication_factor=1 jest KLUCZOWE dla Twojego docker-compose (masz 1 węzeł).
-    # Jeśli ustawisz więcej, Cassandra będzie czekać na nienarodzone węzły.
     create_keyspace_simple(keyspace, replication_factor=1)
 
     print(f"3. Ustawianie domyślnego Keyspace na '{keyspace}'...")
-    # KROK 3: Teraz ustawiamy połączenie na właściwy keyspace
     connection.setup(nodes, keyspace, protocol_version=4)
 
     print("4. Synchronizacja tabel (tworzenie struktur)...")
-    # KROK 4: Tworzymy tabele
     sync_table(UsersByRole)
     sync_table(CustomersByCity)
     sync_table(PaymentsByYearAmount)
