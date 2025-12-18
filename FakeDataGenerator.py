@@ -410,13 +410,13 @@ class FakeDataGenerator:
 
         #upload to orientDB
         for i in range(len(customers)):
-            customer_make = "insert into CUSTOMER set CUSTOMER_ID =  '%s', NAME =  '%s', EMAIL = '%s' ,PHONE = '%s', ADDRESS = '%s', CITY = '%s', COUNTRY = '%s'" % (customers[i].CUSTOMER_ID, customers[i].NAME, customers[i].EMAIL, customers[i].PHONE, customers[i].ADDRESS, customers[i].CITY, customers[i].COUNTRY)
+            customer_make = "insert into CUSTOMER set CUSTOMER_ID =  '%d', NAME =  '%s', EMAIL = '%s' ,PHONE = '%s', ADDRESS = '%s', CITY = '%s', COUNTRY = '%s'" % (customers[i].CUSTOMER_ID, customers[i].NAME, customers[i].EMAIL, customers[i].PHONE, customers[i].ADDRESS, customers[i].CITY, customers[i].COUNTRY)
             orient_engine.command(customer_make)
         for i in range(len(users)):    
-            user_make = "insert into SYS_USER set USER_ID =  '%s', USERNAME = '%s' ,PASSWORD_HASH = '%s', NAME = '%s', SURNAME = '%s', EMAIL = '%s', ROLE = '%s', ACTIVE = '%s'" % (users[i].USER_ID, users[i].USERNAME, users[i].PASSWORD_HASH, users[i].NAME, users[i].SURNAME, users[i].EMAIL, users[i].ROLE, users[i].ACTIVE)
+            user_make = "insert into SYS_USER set USER_ID =  '%d', USERNAME = '%s' ,PASSWORD_HASH = '%s', NAME = '%s', SURNAME = '%s', EMAIL = '%s', ROLE = '%s', ACTIVE = '%d'" % (users[i].USER_ID, users[i].USERNAME, users[i].PASSWORD_HASH, users[i].NAME, users[i].SURNAME, users[i].EMAIL, users[i].ROLE, users[i].ACTIVE)
             orient_engine.command(user_make)
         for i in range(len(products)):    
-            product_make = "insert into PRODUCT set PRODUCT_ID =  '%s', NAME = '%s' ,DESCRIPTION = '%s', PRICE = '%s', STOCK_QUANTITY = '%s'" \
+            product_make = "insert into PRODUCT set PRODUCT_ID =  '%s', NAME = '%s' ,DESCRIPTION = '%s', PRICE = %06.2f, STOCK_QUANTITY = %d" \
                 % (products[i].PRODUCT_ID, products[i].NAME, products[i].DESCRIPTION, products[i].PRICE, products[i].STOCK_QUANTITY)
             orient_engine.command(product_make)
 
