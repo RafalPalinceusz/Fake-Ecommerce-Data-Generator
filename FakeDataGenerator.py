@@ -9,6 +9,23 @@ from sqlalchemy.orm import Session
 # Import Twoich modeli SQL
 from modele import Base, SysUser, Customer, Product, CustomerOrder, OrderItem, Invoice, Payment
 
+#import i inicjalizowanie połączenia z orient 1.5.6
+import pyorient       
+orient_engine = pyorient.OrientDB("localhost", 2424)
+orient_engine.set_session_token(True)
+orient_session = orient_engine.connect("root", "root")
+orient_engine.db_open( 'company', "root", "root" )
+
+def create_tables_orient():
+    orient_engine.command("create class  CUSTOMER extends V")
+    orient_engine.command("create class  CUSTOMER_ORDER extends V")
+    orient_engine.command("create class  INVOICE extends V")
+    orient_engine.command("create class  ORDER_ITEM extends V")
+    orient_engine.command("create class  PAYMENT extends V")
+    orient_engine.command("create class  PRODUCT extends V")
+    orient_engine.command("create class SYS_USER extends V")
+    
+
 # Import modeli Cassandry (zakładam, że plik to cassandra_tables.py)
 from cassandra_tables import (
     UsersByRole, CustomersByCity, ProductsByPrice,
@@ -152,6 +169,12 @@ class FakeDataGenerator:
                 QUANTITY=random.randint(1, 10),
                 UNIT_PRICE=product.PRICE
             ))
+        #upload to orientDB
+        for i in range(len(items)):    
+            order_item_make = "insert into ORDER_ITEM set ORDER_ID = '%s', PRODUCT_ID = '%s', QUANTITY = '%s', UNIT_PRICE = '%s'" \
+            % (items[i].ORDER_ID, items[i].PRODUCT_ID, items[i].QUANTITY, items[i].UNIT_PRICE)
+            orient_engine.command(order_item_make)
+
         return items
 
     def generate_fake_order_data(self, customers, products, sales_users, current_order_id):
@@ -185,6 +208,11 @@ class FakeDataGenerator:
         )
         order.order_items = order_items
         self.session.add(order)
+
+        #upload to orientDB
+        orders_make = "insert into CUSTOMER_ORDER set ORDER_ID =  '%s', CUSTOMER_ID = '%s' ,ORDER_DATE = '%s', STATUS = '%s', TOTAL_AMOUNT = '%s'" \
+        % (order.ORDER_ID, order.CUSTOMER_ID, order.ORDER_DATE, order.STATUS, order.TOTAL_AMOUNT)
+        orient_engine.command(orders_make)
 
         # --- CASSANDRA AGGREGATION (Sales Stats) ---
         # Jeśli zamówienie jest zrealizowane, dodajemy do statystyk
@@ -232,6 +260,11 @@ class FakeDataGenerator:
         )
         order.invoices.append(invoice)
 
+        #upload to orientDB
+        invoice_make = "insert into INVOICE set INVOICE_NUMBER =  '%s' ,STATUS = '%s', CUSTOMER_ID = '%s', ISSUE_DATE = '%s', DUE_DATE = '%s', TOTAL_AMOUNT = '%s', CREATED_BY = '%s'" \
+        % (invoice.INVOICE_NUMBER, invoice.STATUS, invoice.CUSTOMER_ID, invoice.ISSUE_DATE, invoice.DUE_DATE, invoice.TOTAL_AMOUNT, invoice.CREATED_BY)
+        orient_engine.command(invoice_make)
+
         payment_method = None
         payment_amount = 0.0
         payment_confirmed = False
@@ -250,6 +283,11 @@ class FakeDataGenerator:
                 CONFIRMED=1
             )
             invoice.payments.append(payment)
+
+            #upload to orientDB
+            payment_make = "insert into PAYMENT set PAYMENT_ID =  '%s' ,PAYMENT_DATE = '%s', AMOUNT = '%s', METHOD = '%s', CONFIRMED = '%s'" \
+            % (payment.PAYMENT_ID, payment.PAYMENT_DATE, payment.AMOUNT, payment.METHOD, payment.CONFIRMED)
+            orient_engine.command(payment_make)
 
             # --- CASSANDRA WRITE (Payments) ---
             PaymentsByYearAmount.create(
@@ -341,6 +379,9 @@ class FakeDataGenerator:
                 )
 
     def run_generation(self, num_users: int, num_customers: int, num_orders: int):
+        print("Przed start: Generowanie tabel orientDB")
+        create_tables_orient()
+
         print("Start: Generowanie danych...")
 
         products = self.generate_fake_products()
@@ -366,6 +407,18 @@ class FakeDataGenerator:
             self.generate_fake_order_data(customers, products, sales_users, i + 1)
             if (i + 1) % 100 == 0:
                 print(f" ... wygenerowano {i + 1}/{num_orders}")
+
+        #upload to orientDB
+        for i in range(len(customers)):
+            customer_make = "insert into CUSTOMER set CUSTOMER_ID =  '%d', NAME =  '%s', EMAIL = '%s' ,PHONE = %s, ADDRESS = '%s', CITY = '%s', COUNTRY = '%s'" % (customers[i].CUSTOMER_ID, customers[i].NAME, customers[i].EMAIL, customers[i].PHONE, customers[i].ADDRESS, customers[i].CITY, customers[i].COUNTRY)
+            orient_engine.command(customer_make)
+        for i in range(len(users)):    
+            user_make = "insert into SYS_USER set USER_ID =  '%d', USERNAME = '%s' ,PASSWORD_HASH = '%s', NAME = '%s', SURNAME = '%s', EMAIL = '%s', ROLE = '%s', ACTIVE = '%d'" % (users[i].USER_ID, users[i].USERNAME, users[i].PASSWORD_HASH, users[i].NAME, users[i].SURNAME, users[i].EMAIL, users[i].ROLE, users[i].ACTIVE)
+            orient_engine.command(user_make)
+        for i in range(len(products)):    
+            product_make = "insert into PRODUCT set PRODUCT_ID =  '%s', NAME = '%s' ,DESCRIPTION = '%s', PRICE = %06.2f, STOCK_QUANTITY = %d" \
+                % (products[i].PRODUCT_ID, products[i].NAME, products[i].DESCRIPTION, products[i].PRICE, products[i].STOCK_QUANTITY)
+            orient_engine.command(product_make)
 
         # --- FINALIZACJA CASSANDRY ---
         self.flush_cassandra_stats()
