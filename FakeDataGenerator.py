@@ -402,12 +402,16 @@ class FakeDataGenerator:
         finally:
             self.session.close()
 
+
+        print("Usuwanie starych danych z OrientDB")
+        orient_engine.command("SELECT drop_all_data()")
         #upload to orientDB
-        print("Dodawanie do OrientDB")
+        print("Dodawanie danych do OrientDB")
+        #upload to orientDB
         orient_customers = self.session.execute(select(Customer))
         orient_customers_scalar = orient_customers.scalars().all()
         for c in orient_customers_scalar:
-            customer_make = "insert into CUSTOMER set CUSTOMER_ID =  '%d', NAME =  '%s', EMAIL = '%s' ,PHONE = '%s', ADDRESS = '%s', CITY = '%s', COUNTRY = '%s'"\
+            customer_make = "insert into CUSTOMER set CUSTOMER_ID =  %d, NAME =  '%s', EMAIL = '%s' ,PHONE = '%s', ADDRESS = '%s', CITY = '%s', COUNTRY = '%s'"\
             % (c.CUSTOMER_ID, c.NAME, c.EMAIL, c.PHONE, c.ADDRESS, c.CITY, c.COUNTRY)
             orient_engine.command(customer_make)
 
@@ -421,21 +425,21 @@ class FakeDataGenerator:
         orient_customer_orders = self.session.execute(select(CustomerOrder))
         orient_customer_orders_scalar = orient_customer_orders.scalars().all()
         for c in orient_customer_orders_scalar:
-            orders_make = "insert into CUSTOMER_ORDER set ORDER_ID =  '%s', ORDER_ID =  '%s', CUSTOMER_ID = '%s' ,ORDER_DATE = '%s', STATUS = '%s', TOTAL_AMOUNT = '%s'" \
+            orders_make = "insert into CUSTOMER_ORDER set ORDER_ID =  %d, ORDER_ID =  %d, CUSTOMER_ID = %d ,ORDER_DATE = '%s', STATUS = '%s', TOTAL_AMOUNT = %f" \
             % (c.ORDER_ID, c.ORDER_ID, c.CUSTOMER_ID, c.ORDER_DATE, c.STATUS, c.TOTAL_AMOUNT)
             orient_engine.command(orders_make)
  
         orient_invoice = self.session.execute(select(Invoice))
         orient_invoice_scalar = orient_invoice.scalars().all()
         for i in orient_invoice_scalar:
-            invoice_make = "insert into INVOICE set INVOICE_ID = '%s', INVOICE_NUMBER =  '%s', CUSTOMER_ID = '%s', ORDER_ID = '%s', STATUS = '%s',  ISSUE_DATE = '%s', DUE_DATE = '%s', TOTAL_AMOUNT = '%s', CREATED_BY = '%s'" \
+            invoice_make = "insert into INVOICE set INVOICE_ID = %d, INVOICE_NUMBER =  '%s', CUSTOMER_ID = '%s', ORDER_ID = '%s', STATUS = '%s',  ISSUE_DATE = '%s', DUE_DATE = '%s', TOTAL_AMOUNT = '%s', CREATED_BY = '%s'" \
             % (i.INVOICE_ID, i.INVOICE_NUMBER, i.CUSTOMER_ID, i.ORDER_ID, i.STATUS, i.ISSUE_DATE, i.DUE_DATE, i.TOTAL_AMOUNT, i.CREATED_BY)
             orient_engine.command(invoice_make)
             
         orient_payment = self.session.execute(select(Payment))
         orient_payment_scalar = orient_payment.scalars().all()
         for p in orient_payment_scalar:
-            payment_make = "insert into PAYMENT set PAYMENT_ID =  '%s' , INVOICE_ID =  '%s' ,PAYMENT_DATE = '%s', AMOUNT = '%s', METHOD = '%s', CONFIRMED = '%s'" \
+            payment_make = "insert into PAYMENT set PAYMENT_ID =  %d , INVOICE_ID =  %d ,PAYMENT_DATE = '%s', AMOUNT = '%s', METHOD = '%s', CONFIRMED = '%s'" \
             % (p.PAYMENT_ID, p.INVOICE_ID, p.PAYMENT_DATE, p.AMOUNT, p.METHOD, p.CONFIRMED)
             orient_engine.command(payment_make)
 
@@ -449,7 +453,13 @@ class FakeDataGenerator:
         orient_order_items = self.session.execute(select(OrderItem))
         orient_order_items_scalar = orient_order_items.scalars().all()
         for o in orient_order_items_scalar:
-            order_item_make = "insert into ORDER_ITEM set ORDER_ITEM_ID = '%s', ORDER_ID = '%s', PRODUCT_ID = '%d', QUANTITY = '%d', UNIT_PRICE = '%s'" \
+            order_item_make = "insert into ORDER_ITEM set ORDER_ITEM_ID = %d, ORDER_ID = %d, PRODUCT_ID = %d, QUANTITY = %d, UNIT_PRICE = %f" \
             % (o.ORDER_ITEM_ID, o.ORDER_ID, o.PRODUCT_ID, o.QUANTITY, o.UNIT_PRICE)
             orient_engine.command(order_item_make)
-        print("Zakończono dodawanie do OrientDB")
+            
+        print("Zakończono dodawanie danych do OrientDB")
+
+        print("Dodawanie połączeń w OrientDB")
+        orient_engine.command("SELECT fill_edge()")
+        print("Zakończono dodawania połączeń do OrientDB")
+        orient_engine.db_close()
